@@ -29,8 +29,11 @@ class JeouchouBookCrawler
 
     category_urls.each_with_index do |start_url, cat_index|
       @threads = []
-
-      r = RestClient.get start_url
+      begin
+        r = RestClient.get start_url
+      rescue Exception => e
+        next
+      end
       doc = Nokogiri::HTML(@ic.iconv(r))
 
       @book_count = doc.css('#ctl00_ContentPlaceHolder1_lbTotal').text.to_i
@@ -62,10 +65,18 @@ class JeouchouBookCrawler
       internal_code = datas[4] && datas[4].text.strip
       url = "http://www.jcbooks.com.tw/BookDetail.aspx?bokno=#{internal_code}"
 
+      isbn = nil;
+      begin
+        isbn = datas[5] && !datas[5].text.strip.empty? && ISBN.thirteen(datas[5].text.strip)
+      rescue Exception => e
+        print "#{datas[5]}\n"
+      end
+
+
       @books[internal_code] = {
         name: datas[1] && datas[1].text.strip,
         author: datas[2] && datas[2].text.strip,
-        isbn: datas[5] && ISBN.thirteen(datas[5].text.strip),
+        isbn: isbn,
         internal_code: internal_code,
         price: datas[6] && datas[6].text.strip.gsub(/[^\s]/, '').to_i,
         url: url
@@ -73,7 +84,7 @@ class JeouchouBookCrawler
 
       sleep(1) until (
         @threads.delete_if { |t| !t.status };  # remove dead (ended) threads
-        @threads.count < (ENV['MAX_THREADS'] || 30)
+        @threads.count < (ENV['MAX_THREADS'] || 50)
       )
       @threads << Thread.new do
         r = RestClient.get url
