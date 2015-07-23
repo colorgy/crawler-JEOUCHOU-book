@@ -1,8 +1,8 @@
 require 'iconv'
 require 'crawler_rocks'
 require 'json'
-require 'isbn'
 require 'pry'
+require 'book_toolkit'
 
 require 'thread'
 require 'thwait'
@@ -10,7 +10,10 @@ require 'thwait'
 class JeouchouBookCrawler
   include CrawlerRocks::DSL
 
-  def initialize
+  def initialize update_progress: nil, after_each: nil
+    @update_progress_proc = update_progress
+    @after_each_proc = after_each
+
     @index_url = "http://www.jcbooks.com.tw/"
     @ic = Iconv.new("utf-8//translit//IGNORE","big5")
   end
@@ -65,11 +68,12 @@ class JeouchouBookCrawler
       internal_code = datas[4] && datas[4].text.strip
       url = "http://www.jcbooks.com.tw/BookDetail.aspx?bokno=#{internal_code}"
 
-      isbn = nil;
+      isbn = nil; invalid_isbn = nil
       begin
-        isbn = datas[5] && !datas[5].text.strip.empty? && ISBN.thirteen(datas[5].text.strip)
+        isbn = datas[5] && BookToolkit.to_isbn13(datas[5].text.strip)
       rescue Exception => e
         print "#{datas[5]}\n"
+        invalid_isbn = datas[5].text.strip
       end
 
 
@@ -77,14 +81,16 @@ class JeouchouBookCrawler
         name: datas[1] && datas[1].text.strip,
         author: datas[2] && datas[2].text.strip,
         isbn: isbn,
+        invalid_isbn: invalid_isbn,
         internal_code: internal_code,
-        price: datas[6] && datas[6].text.strip.gsub(/[^\s]/, '').to_i,
-        url: url
+        original_price: datas[6] && datas[6].text.strip.gsub(/[^\s]/, '').to_i,
+        url: url,
+        known_supplier: 'jeouchou'
       }
 
       sleep(1) until (
         @threads.delete_if { |t| !t.status };  # remove dead (ended) threads
-        @threads.count < (ENV['MAX_THREADS'] || 50)
+        @threads.count < (ENV['MAX_THREADS'] || 30)
       )
       @threads << Thread.new do
         r = RestClient.get url
@@ -95,11 +101,13 @@ class JeouchouBookCrawler
         @books[internal_code][:external_image_url] = external_image_url
 
         @finish_book_count += 1
-        print "#{@finish_book_count} / #{@book_count}\n"
+
+        @after_each_proc.call(book: @books[internal_code]) if @after_each_proc
+        # print "#{@finish_book_count} / #{@book_count}\n"
       end # end Thread do
     end
   end
 end
 
-cc = JeouchouBookCrawler.new
-File.write('jeouchou_books.json', JSON.pretty_generate(cc.books))
+# cc = JeouchouBookCrawler.new
+# File.write('jeouchou_books.json', JSON.pretty_generate(cc.books))
